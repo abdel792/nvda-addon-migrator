@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -14,6 +18,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -34,3 +40,13 @@ jobs:
           name: nvda-addon-migrator
           path: dist/nvda-addon-migrator.exe
           archive: false
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v1.0.0-auto"
+          name: "Automated Release (Latest Build)"
+          draft: false
+          prerelease: false
+          files: dist/nvda-addon-migrator.exe
