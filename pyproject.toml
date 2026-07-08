@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nvda-addon-migrator"
+version = "1.0.0"
+description = "An automated, AST-based industrial tool to update NVDA add-ons to the latest nvaccess/AddonTemplate framework."
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "GPL-2.0-or-later" }
+authors = [
+	{ name = "Abdelkrim BENSAÏD", email = "abdelkrim.bensaid@gmail.com" }
+]
+classifiers = [
+	"Development Status :: 5 - Production/Stable",
+	"Intended Audience :: Developers",
+	"Programming Language :: Python :: 3",
+	"Programming Language :: Python :: 3.13",
+	"Programming Language :: Python :: 3.14",
+	"Topic :: Software Development :: Build Tools",
+]
+
+# Core dependencies required to run the script
+dependencies = [
+	"tomlkit>=0.12.0",
+]
+
+# Optional dependencies for development and executable building
+[project.optional-dependencies]
+dev = [
+	"ruff>=0.3.0",
+	"pyright>=1.1.411",
+]
+build = [
+	"pyinstaller>=6.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nvda_migrator"]
+
+# Ruff configuration to match strict project linting standards
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "D"]
+ignore = ["D203", "D213"]
