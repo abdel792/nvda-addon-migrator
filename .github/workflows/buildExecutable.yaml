@@ -1,0 +1,36 @@
+name: Build Executable
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies and build executable
+        run: |
+          uv sync --all-extras
+          uv run pyinstaller nvda-addon-migrator.spec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nvda-addon-migrator
+          path: dist/nvda-addon-migrator.exe
+          archive: false

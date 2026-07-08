@@ -30,7 +30,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
 	"ruff>=0.3.0",
-	"pyright>=1.1.411",
+	"pyright[nodejs]>=1.1.411",
+	"uv==0.11.15",
+	"pre-commit==4.2.0",
+		
 ]
 build = [
 	"pyinstaller>=6.4.0",

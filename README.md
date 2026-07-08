@@ -26,7 +26,7 @@ If you are running the source code directly from this repository using `uv`, you
 
 1.	**Open a Terminal:** Navigate to your local copy of the `nvda-addon-migrator` tool.
 2.	**Execute the Migration Command:** Call the script using `uv run` while providing the absolute or relative path to your outdated add-on folder as an argument:
-	```bash
+	```
 	# Syntax: uv run src/nvda_migrator/migrate.py "C:\path\to\your\outdated-addon-repo"
 	uv run src/nvda_migrator/migrate.py "../my-nvda-addon"
 	```
@@ -72,5 +72,28 @@ This project leverages `uv` for lightning-fast environment provisioning and depe
 ### 2. Setup
 To bootstrap your local workspace and synchronize all core, linting, and compilation dependencies, simply run:
 
-```bash
+```
 uv sync --all-extras
+
+### 3. Pre-commit Hooks Setup
+To activate automated checks before each commit, run:
+
+```
+uv run pre-commit install
+```
+
+###4. Code Quality (Linting & Formatting)
+To manually check the codebase using Ruff and Pyright:
+
+```
+uv run ruff check .
+uv run pyright
+```
+###5. Compiling to a Standalone Executable (.exe)
+To package the script into a standalone .exe file for distribution using the repository's PyInstaller specification, run the following command:
+
+```
+uv run pyinstaller nvda-addon-migrator.spec
+```
+
+The compiled executable and its build artifacts will be generated, and the final binary will be located inside the dist/ directory.
