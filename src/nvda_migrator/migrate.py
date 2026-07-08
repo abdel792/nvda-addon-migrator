@@ -1,36 +1,29 @@
 #!/usr/bin/env python3
-import os
-import sys
-import ast
-import shutil
+"""Main migration engine using AST tracking and structure alignment."""
+
 import argparse
+import ast
+import os
+import shutil
 import subprocess
+import sys
 import tempfile
+
+# Built-in in Python 3.11+, fully standardized for Python 3.13
 from datetime import datetime
+from pathlib import Path
+from typing import Any, cast
 
-# Flexible TOML loading to support structural merging
-# Using tomlkit is highly recommended for preserving comments, fallback to tomllib/tomli
-TOMLKIT_AVAILABLE = False
-try:
-	import tomlkit
-	TOMLKIT_AVAILABLE = True
-except ImportError:
-	try:
-		import tomllib  # Python 3.11+
-	except ImportError:
-		try:
-			import tomli as tomllib
-		except ImportError:
-			print("Error: The 'tomlkit', 'tomllib' or 'tomli' module is required to run this script.")
-			print("Please install it using: pip install tomli tomlkit")
-			input("\nPress Enter to exit...")
-			sys.exit(1)
+import tomlkit
 
-def deepMergeDicts(dictProj, dictTpl):
+TOMLKIT_AVAILABLE: bool = True
+
+
+def deepMergeDicts(dictProj: dict[str, Any], dictTpl: dict[str, Any]) -> dict[str, Any]:
 	"""Recursively merges dictTpl into dictProj. Supports both dict and tomlkit container types."""
 	for key, value in dictTpl.items():
 		if key in dictProj:
-			if hasattr(dictProj[key], 'items') and hasattr(value, 'items'):
+			if isinstance(dictProj[key], dict) and isinstance(value, dict):
 				deepMergeDicts(dictProj[key], value)
 			elif isinstance(dictProj[key], list) and isinstance(value, list):
 				for item in value:
@@ -42,23 +35,30 @@ def deepMergeDicts(dictProj, dictTpl):
 			dictProj[key] = value
 	return dictProj
 
-def extractBuildvarsMetadata(filePath):
-	"""Extracts metadata from an old buildVars.py file safely using modern AST APIs."""
-	if not os.path.exists(filePath):
+
+def extractBuildvarsMetadata(filePath: str | Path) -> tuple[dict[str, Any], dict[str, Any]]:
+	"""Extract metadata from an old buildVars.py file safely using modern AST APIs."""
+	p = Path(filePath)
+	if not p.exists():
 		return {}, {}
 
-	with open(filePath, "r", encoding="utf-8") as f:
+	with p.open("r", encoding="utf-8") as f:
 		try:
 			tree = ast.parse(f.read())
 		except SyntaxError as e:
-			print(f"[-] Syntax error while reading {filePath}: {e}")
+			print(f"[-] Syntax error while reading {p}: {e}")
 			return {}, {}
 
-	metadata = {}
-	globalVars = {}
+	metadata: dict[str, Any] = {}
+	globalVars: dict[str, Any] = {}
 	topLevelVars = {
-		'pythonSources', 'excludedFiles', 'baseLanguage', 'markdownExtensions',
-		'brailleTables', 'symbolDictionaries', 'speechDictionaries'
+		"pythonSources",
+		"excludedFiles",
+		"baseLanguage",
+		"markdownExtensions",
+		"brailleTables",
+		"symbolDictionaries",
+		"speechDictionaries",
 	}
 
 	for node in ast.walk(tree):
@@ -71,73 +71,88 @@ def extractBuildvarsMetadata(filePath):
 			if varName == "addon_info":
 				if isinstance(node.value, ast.Dict):
 					for keyNode, valNode in zip(node.value.keys, node.value.values):
-						key = getattr(keyNode, 'value', None)
-						if isinstance(valNode, ast.Call) and getattr(valNode.func, 'id', None) == '_':
+						if keyNode is None:
+							continue
+						key = getattr(keyNode, "value", None)
+						if isinstance(valNode, ast.Call) and getattr(valNode.func, "id", None) == "_":
 							valNode = valNode.args[0]
-						val = getattr(valNode, 'value', None)
+						val = getattr(valNode, "value", None)
 						if key is not None:
 							metadata[key] = val
-				elif isinstance(node.value, ast.Call) and getattr(node.value.func, 'id', None) == "AddonInfo":
+				elif isinstance(node.value, ast.Call) and getattr(node.value.func, "id", None) == "AddonInfo":
 					for keyword in node.value.keywords:
 						key = keyword.arg
 						valNode = keyword.value
-						if isinstance(valNode, ast.Call) and getattr(valNode.func, 'id', None) == '_':
+						if isinstance(valNode, ast.Call) and getattr(valNode.func, "id", None) == "_":
 							valNode = valNode.args[0]
-						val = getattr(valNode, 'value', None)
-						metadata[key] = val
+						val = getattr(valNode, "value", None)
+						if key is not None:
+							metadata[key] = val
 			elif varName in topLevelVars:
 				globalVars[varName] = ast.unparse(node.value)
 		elif isinstance(node, ast.AnnAssign):
 			if isinstance(node.target, ast.Name) and node.target.id in topLevelVars:
-				globalVars[node.target.id] = ast.unparse(node.value)
+				if node.value is not None:
+					globalVars[node.target.id] = ast.unparse(node.value)
 
 	return metadata, globalVars
 
-def mergePyprojectToml(projPath, tplPath, dryRun=False):
-	"""Merges template pyproject.toml configuration into the developer's file."""
-	if not os.path.exists(tplPath):
+
+def mergePyprojectToml(projPath: str | Path, tplPath: str | Path, dryRun: bool = False) -> str:
+	"""Merge template pyproject.toml configuration into the developer's file."""
+	pTpl = Path(tplPath)
+	pProj = Path(projPath)
+
+	if not pTpl.exists():
 		return "skipped (no template)"
-	
-	if not os.path.exists(projPath):
+
+	if not pProj.exists():
 		if not dryRun:
-			shutil.copy2(tplPath, projPath)
+			shutil.copy2(pTpl, pProj)
 		return "created from template"
 
 	try:
-		if TOMLKIT_AVAILABLE:
-			with open(projPath, "r", encoding="utf-8") as f:
-				projData = tomlkit.parse(f.read())
-			with open(tplPath, "r", encoding="utf-8") as f:
-				tplData = tomlkit.parse(f.read())
-			
-			mergedData = deepMergeDicts(projData, tplData)
-			if not dryRun:
-				with open(projPath, "w", encoding="utf-8") as f:
-					f.write(tomlkit.dumps(mergedData))
-			return "merged intelligently (tomlkit)"
-		else:
-			return "preserved (install 'tomlkit' for automated smart merging)"
+		with pProj.open("r", encoding="utf-8") as f:
+			projData = tomlkit.parse(f.read())
+		with pTpl.open("r", encoding="utf-8") as f:
+			tplData = tomlkit.parse(f.read())
+
+		mergedData = deepMergeDicts(cast(dict[str, Any], projData), cast(dict[str, Any], tplData))
+		if not dryRun:
+			with pProj.open("w", encoding="utf-8") as f:
+				f.write(tomlkit.dumps(cast(tomlkit.TOMLDocument, mergedData)))
+		return "merged intelligently (tomlkit)"
 	except Exception as e:
 		return f"failed to merge ({str(e)})"
 
-def mergeBuildvarsFile(projPath, tplPath, metadata, globalVars, dryRun=False):
-	"""Merges template buildVars.py using precise AST range tracking to prevent multiline leaks."""
-	if not os.path.exists(tplPath):
+
+def mergeBuildvarsFile(
+	projPath: str | Path,
+	tplPath: str | Path,
+	metadata: dict[str, Any],
+	globalVars: dict[str, Any],
+	dryRun: bool = False,
+) -> str:
+	"""Merge template buildVars.py using precise AST range tracking to prevent multiline leaks."""
+	pTpl = Path(tplPath)
+	pProj = Path(projPath)
+
+	if not pTpl.exists():
 		return "failed (no template found)"
-	
-	with open(tplPath, "r", encoding="utf-8") as f:
+
+	with pTpl.open("r", encoding="utf-8") as f:
 		tplContent = f.read()
-	
+
 	try:
 		tree = ast.parse(tplContent)
 	except SyntaxError as e:
 		return f"failed (template syntax error: {e})"
 
 	tplLines = tplContent.splitlines(keepends=True)
-	replacements = {}
+	replacements: dict[tuple[int, int], str] = {}
 
 	for node in ast.walk(tree):
-		if isinstance(node, ast.Call) and getattr(node.func, 'id', None) == "AddonInfo":
+		if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "AddonInfo":
 			for kw in node.keywords:
 				if kw.arg in metadata:
 					key = kw.arg
@@ -145,49 +160,75 @@ def mergeBuildvarsFile(projPath, tplPath, metadata, globalVars, dryRun=False):
 					if val is None:
 						formattedVal = "None"
 					elif isinstance(val, str):
-						formattedVal = f'_("""{val}""")' if key in ['addon_summary', 'addon_description', 'addon_changelog'] else f'"{val}"'
+						is_multiline = key in ["addon_summary", "addon_description", "addon_changelog"]
+						formattedVal = f'_("""{val}""")' if is_multiline else f'"{val}"'
 					else:
 						formattedVal = str(val)
-					
-					indent = tplLines[kw.lineno - 1][:len(tplLines[kw.lineno - 1]) - len(tplLines[kw.lineno - 1].lstrip())]
-					replacements[(kw.lineno - 1, kw.end_lineno)] = f"{indent}{key}={formattedVal},\n"
-		
+
+					if kw.end_lineno is not None:
+						line_content = tplLines[kw.lineno - 1]
+						indent = line_content[: len(line_content) - len(line_content.lstrip())]
+						replacements[(kw.lineno - 1, kw.end_lineno)] = f"{indent}{key}={formattedVal},\n"
+
 		elif isinstance(node, ast.Assign) and len(node.targets) == 1:
 			target = node.targets[0]
 			if isinstance(target, ast.Name) and target.id in globalVars:
 				key = target.id
 				valExpression = globalVars[key]
-				indent = tplLines[node.lineno - 1][:len(tplLines[node.lineno - 1]) - len(tplLines[node.lineno - 1].lstrip())]
-				
-				# Dynamic fix: Prepend import os inline if the assignment expression uses the os module
-				prefix = f"{indent}import os\n" if "os." in valExpression else ""
-				replacements[(node.lineno - 1, node.end_lineno)] = f"{prefix}{indent}{key} = {valExpression}\n"
-				
+				if node.end_lineno is not None:
+					line_content = tplLines[node.lineno - 1]
+					indent = line_content[: len(line_content) - len(line_content.lstrip())]
+					prefix = f"{indent}import os\n" if "os." in valExpression else ""
+					replacements[(node.lineno - 1, node.end_lineno)] = (
+						f"{prefix}{indent}{key} = {valExpression}\n"
+					)
+
 		elif isinstance(node, ast.AnnAssign):
 			if isinstance(node.target, ast.Name) and node.target.id in globalVars:
 				key = node.target.id
 				valExpression = globalVars[key]
-				indent = tplLines[node.lineno - 1][:len(tplLines[node.lineno - 1]) - len(tplLines[node.lineno - 1].lstrip())]
-				typeStr = ast.unparse(node.annotation)
-				
-				# Dynamic fix: Prepend import os inline if the annotation assignment expression uses the os module
-				prefix = f"{indent}import os\n" if "os." in valExpression else ""
-				replacements[(node.lineno - 1, node.end_lineno)] = f"{prefix}{indent}{key}: {typeStr} = {valExpression}\n"
+				if node.end_lineno is not None:
+					line_content = tplLines[node.lineno - 1]
+					indent = line_content[: len(line_content) - len(line_content.lstrip())]
+					typeStr = ast.unparse(node.annotation)
+					prefix = f"{indent}import os\n" if "os." in valExpression else ""
+					replacements[(node.lineno - 1, node.end_lineno)] = (
+						f"{prefix}{indent}{key}: {typeStr} = {valExpression}\n"
+					)
 
 	sortedRanges = sorted(replacements.keys(), key=lambda x: x[0], reverse=True)
 	for start, end in sortedRanges:
 		tplLines[start:end] = [replacements[(start, end)]]
 
 	if not dryRun:
-		with open(projPath, "w", encoding="utf-8") as f:
+		with pProj.open("w", encoding="utf-8") as f:
 			f.writelines(tplLines)
 	return "merged & structured (AST verified)"
 
-def main():
-	parser = argparse.ArgumentParser(description="Non-destructive industrial migration tool for NVDA Add-ons.")
-	parser.add_argument("addonDir", nargs="?", default=None, help="Path to the root directory of the add-on to update (defaults to current directory).")
-	parser.add_argument("--dry-run", dest="dryRun", action="store_true", help="Simulate execution without modifying any files.")
-	parser.add_argument("--skip-backup", dest="skipBackup", action="store_true", help="Disable safety automatic project backup.")
+
+def main() -> None:
+	"""Execute main CLI entry point for the NVDA Add-on migration tool."""
+	parser = argparse.ArgumentParser(
+		description="Non-destructive industrial migration tool for NVDA Add-ons.",
+	)
+	parser.add_argument(
+		"addonDir",
+		nargs="?",
+		default=None,
+		help="Path to the root directory of the add-on to update (defaults to current directory).",
+	)
+	parser.add_argument(
+		"--dry-run",
+		dest="dryRun",
+		action="store_true",
+		help="Simulate execution without modifying any files.",
+	)
+	parser.add_argument(
+		"--skip-backup",
+		dest="skipBackup",
+		action="store_true",
+		help="Disable safety automatic project backup.",
+	)
 	args = parser.parse_args()
 
 	addonDirInput = args.addonDir if args.addonDir else os.getcwd()
@@ -198,7 +239,7 @@ def main():
 
 	oldBuildvars = os.path.join(addonDir, "buildVars.py")
 	oldPyproject = os.path.join(addonDir, "pyproject.toml")
-	
+
 	if not os.path.exists(oldBuildvars):
 		print(f"[-] Error: '{addonDir}' does not appear to be a valid NVDA Add-on (missing buildVars.py).")
 		input("\nPress Enter to exit...")
@@ -216,7 +257,11 @@ def main():
 		backupDir = f"{addonDir}_bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 		print(f"[*] Phase 2: Creating safety automatic backup in: {os.path.basename(backupDir)}...")
 		try:
-			shutil.copytree(addonDir, backupDir, ignore=shutil.ignore_patterns('.git', '__pycache__', '.venv', '*_bak_*'))
+			shutil.copytree(
+				addonDir,
+				backupDir,
+				ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv", "*_bak_*"),
+			)
 			print("[+] Backup created successfully.")
 		except Exception as e:
 			print(f"[-] Critical: Backup failed ({e}). Aborting migration.")
@@ -226,39 +271,51 @@ def main():
 		print("[*] Phase 2: Safety backup skipped.")
 
 	print("[*] Phase 3: Provisioning latest official NVDA AddonTemplate via Git...")
-	
+
 	with tempfile.TemporaryDirectory() as tempDir:
-		print(f"[*] Cloning template into temporary workspace...")
+		print("[*] Cloning template into temporary workspace...")
 		templateUrl = "https://github.com/nvaccess/AddonTemplate.git"
-		
+
 		try:
 			subprocess.run(
 				["git", "clone", "--depth", "1", templateUrl, tempDir],
-				check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+				check=True,
+				stdout=subprocess.DEVNULL,
+				stderr=subprocess.PIPE,
 			)
 			print("[+] Template cloned successfully.")
 		except (subprocess.CalledProcessError, FileNotFoundError) as e:
-			print(f"[-] Error: Failed to execute git clone. Make sure Git is installed and available in your PATH.")
-			if hasattr(e, 'stderr') and e.stderr:
+			print("[-] Error: Failed to execute git clone. Make sure Git is available in your PATH.")
+			if isinstance(e, subprocess.CalledProcessError) and e.stderr:
 				print(f"Details: {e.stderr.decode('utf-8', errors='ignore')}")
 			input("\nPress Enter to exit...")
 			sys.exit(1)
 
 		print("[*] Synchronizing template machinery files...")
-		protectedElements = {"readme.md", "changelog.md", "addon", ".git", "__pycache__", ".venv", "docs", ".ruff_cache", "migrate.py"}
+		protectedElements = {
+			"readme.md",
+			"changelog.md",
+			"addon",
+			".git",
+			"__pycache__",
+			".venv",
+			"docs",
+			".ruff_cache",
+			"migrate.py",
+		}
 		syncReport = []
 
 		for item in os.listdir(tempDir):
 			if item.lower() in protectedElements:
 				syncReport.append(f"{item} .................... skipped (protected scope)")
 				continue
-			
+
 			if item in ["buildVars.py", "pyproject.toml"]:
 				continue
 
 			srcItem = os.path.join(tempDir, item)
 			dstItem = os.path.join(addonDir, item)
-			
+
 			try:
 				if os.path.isdir(srcItem):
 					if not args.dryRun:
@@ -286,8 +343,12 @@ def main():
 		print("\nTemplate synchronization:")
 		for entry in syncReport:
 			print(f"  - {entry}")
-		print(f"\nConfiguration files:\n  buildVars.py ............... {bvStatus}\n  pyproject.toml ............. {ppStatus}")
-		
+		print(
+			f"\nConfiguration files:\n"
+			f"  buildVars.py ............... {bvStatus}\n"
+			f"  pyproject.toml ............. {ppStatus}",
+		)
+
 		if not args.dryRun:
 			print("\n[+] Project successfully migrated. Temporary workspace destroyed.")
 		else:
@@ -295,6 +356,6 @@ def main():
 
 	input("\nPress Enter to exit...")
 
+
 if __name__ == "__main__":
 	main()
-    
