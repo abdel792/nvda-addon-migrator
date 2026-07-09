@@ -117,7 +117,64 @@ def mergePyprojectToml(projPath: str | Path, tplPath: str | Path, dryRun: bool =
 		with pTpl.open("r", encoding="utf-8") as f:
 			tplData = tomlkit.parse(f.read())
 
+		# Check if NV Access was ALREADY the original author/maintainer of the project
+		was_originally_nvaccess = False
+		if "project" in projData:
+			for field in ["authors", "maintainers"]:
+				if field in projData["project"] and isinstance(projData["project"][field], list):
+					for item in projData["project"][field]:
+						name = item.get("name", "") if hasattr(item, "get") else ""
+						if not name and isinstance(item, dict):
+							name = item.get("name", "")
+						if str(name).strip().lower() in ["nv access", "nvaccess"]:
+							was_originally_nvaccess = True
+							break
+
+		# Backup dependencies from project to merge them manually later
+		proj_deps = []
+		if "project" in projData and "dependencies" in projData["project"]:
+			proj_deps = list(projData["project"]["dependencies"])
+			# Temporarily remove dependencies from project to let template comments win
+			del projData["project"]["dependencies"]
+
+		# Execute the main structural merge
 		mergedData = deepMergeDicts(cast(dict[str, Any], projData), cast(dict[str, Any], tplData))
+
+		if "project" in mergedData:
+			project_section = mergedData["project"]
+
+			# 1. Conditional cleanup of NV Access placeholders
+			# Only remove them if NV Access wasn't the original author of the add-on
+			if not was_originally_nvaccess:
+				for field in ["authors", "maintainers"]:
+					if field in project_section and isinstance(project_section[field], list):
+						toml_list = project_section[field]
+						# Reverse loop to safely delete by index within tomlkit structure
+						for i in range(len(toml_list) - 1, -1, -1):
+							item = toml_list[i]
+							name = item.get("name", "") if hasattr(item, "get") else ""
+							if not name and isinstance(item, dict):
+								name = item.get("name", "")
+
+							if str(name).strip().lower() in ["nv access", "nvaccess"]:
+								toml_list.pop(i)
+
+			# 2. Smart merge of dependencies (Template layout and comments win)
+			if "dependencies" in project_section:
+				tpl_deps = project_section["dependencies"]
+
+				# Extract base package name (e.g. 'pyright' from 'pyright[nodejs]==1.1.407')
+				def get_base(s: str) -> str:
+					return s.split("[")[0].split("=")[0].split(">")[0].strip().lower()
+
+				tpl_bases = {get_base(d) for d in tpl_deps}
+
+				# Append custom user dependencies only if they are not already defined by the template
+				for dep in proj_deps:
+					base = get_base(dep)
+					if base not in tpl_bases:
+						tpl_deps.append(dep)
+
 		if not dryRun:
 			with pProj.open("w", encoding="utf-8") as f:
 				f.write(tomlkit.dumps(cast(tomlkit.TOMLDocument, mergedData)))
