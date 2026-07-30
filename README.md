@@ -65,34 +65,46 @@ When executed, the tool safely automates the entire infrastructure upgrade proce
 This project leverages `uv` for lightning-fast environment provisioning and dependency tracking.
 
 ### 1. Requirements
+
 *	Python 3.13 or 3.14
 *	Git available in your system's `PATH`
 *	`uv` installed globally on your system (Install via: `pip install uv` or official installers)
 
 ### 2. Setup
+
 To bootstrap your local workspace and synchronize all core, linting, and compilation dependencies, simply run:
 
-```
+```cmd
 uv sync --all-extras
+```
 
 ### 3. Pre-commit Hooks Setup
+
 To activate automated checks before each commit, run:
 
-```
+```cmd
 uv run pre-commit install
 ```
 
-###4. Code Quality (Linting & Formatting)
+### 4. Code Quality (Linting & Formatting)
+
 To manually check the codebase using Ruff and Pyright:
 
-```
+```cmd
 uv run ruff check .
+```
+
+and
+
+```cmd
 uv run pyright
 ```
-###5. Compiling to a Standalone Executable (.exe)
+
+### 5. Compiling to a Standalone Executable (.exe)
+
 To package the script into a standalone .exe file for distribution using the repository's PyInstaller specification, run the following command:
 
-```
+```cmd
 uv run pyinstaller nvda-addon-migrator.spec
 ```
 
